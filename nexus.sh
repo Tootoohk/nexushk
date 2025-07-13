@@ -13,12 +13,45 @@ mkdir -p "$BIN_DIR" "$CFG_DIR"
 
 function check_dependencies() {
     echo -e "${GREEN}>>> 检查/安装依赖${NC}"
-    apt update && apt install -y curl wget jq unzip nodejs npm
+    apt update && apt install -y curl wget jq unzip
+    # 检查 nodejs 是否存在且大于 16.x
+    if command -v node >/dev/null 2>&1; then
+        nodever=$(node -v | sed 's/v//;s/\..*//')
+        if (( nodever < 16 )); then
+            echo -e "${GREEN}检测到 Node.js 版本过旧，将卸载并升级...${NC}"
+            apt remove -y nodejs libnode-dev npm || true
+            apt purge -y nodejs libnode-dev npm || true
+            apt autoremove -y || true
+            install_nodejs_new
+        else
+            echo -e "${GREEN}Node.js 已安装且版本合适${NC}"
+        fi
+    else
+        install_nodejs_new
+    fi
+
+    # 确保 npm 存在（部分系统 nodejs 不带 npm）
+    if ! command -v npm >/dev/null 2>&1; then
+        echo -e "${GREEN}npm 未检测到，自动安装...${NC}"
+        apt install -y npm
+    fi
+
+    # 检查 pm2 是否存在，否则用 npm 安装
     if ! command -v pm2 >/dev/null 2>&1; then
+        echo -e "${GREEN}pm2 未检测到，自动全局安装...${NC}"
         npm install -g pm2
     fi
-    echo -e "${GREEN}依赖检查完毕${NC}"
+
+    echo -e "${GREEN}依赖检查和环境准备完毕！${NC}"
 }
+
+# 安装最新版 Node.js LTS (20.x, 可根据需要更换版本号)
+function install_nodejs_new() {
+    echo -e "${GREEN}正在安装最新 Node.js（官方源）...${NC}"
+    curl -fsSL https://deb.nodesource.com/setup_20.x | bash -
+    apt install -y nodejs
+}
+
 
 function detect_arch() {
     arch=$(uname -m)
