@@ -21,13 +21,16 @@ function check_dependencies() {
 }
 
 function detect_arch() {
-    local arch=$(uname -m)
-    if [[ "$arch" =~ "arm" ]]; then
+    arch=$(uname -m)
+    if [[ "$arch" == "x86_64" ]]; then
+        echo "amd"
+    elif [[ "$arch" == "aarch64" ]] || [[ "$arch" == arm* ]] || [[ "$arch" == "arm64" ]]; then
         echo "arm"
     else
         echo "amd"
     fi
 }
+
 
 function download_bins_and_cfgs() {
     cd "$BIN_DIR"
