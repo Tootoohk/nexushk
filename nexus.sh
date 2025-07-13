@@ -206,11 +206,14 @@ EOF
 
 view_logs() {
     while true; do
-        echo -e "\n${GREEN}1. 查看服务端日志（聚合所有服务端实例日志）\n2. 查看客户端日志（聚合选定套数所有实例日志）\n3. 返回主菜单${NC}"
+        echo -e "\n${GREEN}1. 查看服务端日志（聚合所有服务端实例日志）"
+        echo "2. 查看客户端日志（聚合选定套数所有实例日志）"
+        echo "3. 返回主菜单${NC}"
         read -p "请选择: " opt
         case $opt in
             1)
                 cd "$NEXUS_DIR"
+                # 自动聚合所有服务端 error 日志
                 logfiles=$(ls $HOME/.pm2/logs/---1-*-error.log 2>/dev/null)
                 if [ -z "$logfiles" ]; then
                     echo "没有服务端日志文件（还未产生日志）"
@@ -245,8 +248,8 @@ view_logs() {
                 read -p "请选择要查看的套数(输入编号, 0返回): " num
                 [[ "$num" == "0" ]] && continue
                 cfgid=${configs[$((num-1))]}
-                # 匹配所有对应的 error.log
-                logfiles=$(ls $HOME/.pm2/logs/---1-${cfgid}-error.log 2>/dev/null)
+                # 聚合该套所有实例的 error 日志
+                logfiles=$(ls $HOME/.pm2/logs/---${cfgid}-*-error.log 2>/dev/null)
                 if [ -z "$logfiles" ]; then
                     echo "没有该套客户端的日志文件（还未产生日志）"
                     continue
