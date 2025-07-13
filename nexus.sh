@@ -1,210 +1,113 @@
 #!/bin/bash
+
 set -e
 
-RED='\033[0;31m'
 GREEN='\033[0;32m'
 NC='\033[0m'
 
-NEXUS_DIR="$PWD/nexus"
-SERVER_CONFIG_URL="https://github.com/Tootoohk/nexushk/releases/download/1/nexus_server.txt"
-CLIENT_CONFIG_URL="https://github.com/Tootoohk/nexushk/releases/download/1/nexus_client.txt"
+NEXUS_DIR="$HOME/nexus"
+BIN_DIR="$NEXUS_DIR/bin"
+CFG_DIR="$NEXUS_DIR/cfg"
 
-SERVER_ARM_URL="https://github.com/Tootoohk/nexushk/releases/download/1/nexus_server_arm"
-CLIENT_ARM_URL="https://github.com/Tootoohk/nexushk/releases/download/1/nexus_client_arm"
-SERVER_AMD_URL="https://github.com/Tootoohk/nexushk/releases/download/1/nexus_server_amd"
-CLIENT_AMD_URL="https://github.com/Tootoohk/nexushk/releases/download/1/nexus_client_amd"
+mkdir -p "$BIN_DIR" "$CFG_DIR"
 
-check_and_install_deps() {
-    echo -e "${GREEN}更新系统软件包...${NC}"
-    sudo apt update && sudo apt install -y curl wget jq unzip nodejs
-    if ! command -v pm2 &>/dev/null; then
-        echo -e "${GREEN}正在全局安装 pm2 ...${NC}"
-        sudo npm install -g pm2
+function check_dependencies() {
+    echo -e "${GREEN}>>> 检查/安装依赖${NC}"
+    apt update && apt install -y curl wget jq unzip nodejs
+    if ! command -v pm2 >/dev/null 2>&1; then
+        npm install -g pm2
+    fi
+    echo -e "${GREEN}依赖检查完毕${NC}"
+}
+
+function detect_arch() {
+    local arch=$(uname -m)
+    if [[ "$arch" =~ "arm" ]]; then
+        echo "arm"
     else
-        echo -e "${GREEN}pm2 已安装，跳过升级${NC}"
+        echo "amd"
     fi
-
-    if [ ! -d "$NEXUS_DIR" ]; then
-        mkdir -p "$NEXUS_DIR"
-        echo -e "${GREEN}已创建nexus目录：$NEXUS_DIR${NC}"
-    fi
-
-    cd "$NEXUS_DIR"
-    ARCH=$(uname -m)
-    case $ARCH in
-        x86_64|amd64)
-            SERVER_BIN="nexus_server_amd"
-            CLIENT_BIN="nexus_client_amd"
-            SERVER_URL="$SERVER_AMD_URL"
-            CLIENT_URL="$CLIENT_AMD_URL"
-            ;;
-        aarch64|arm64)
-            SERVER_BIN="nexus_server_arm"
-            CLIENT_BIN="nexus_client_arm"
-            SERVER_URL="$SERVER_ARM_URL"
-            CLIENT_URL="$CLIENT_ARM_URL"
-            ;;
-        *)
-            echo -e "${RED}不支持的架构: $ARCH${NC}"
-            exit 1
-            ;;
-    esac
-
-    [ -f "$SERVER_BIN" ] || wget -q --show-progress -O "$SERVER_BIN" "$SERVER_URL"
-    [ -f "$CLIENT_BIN" ] || wget -q --show-progress -O "$CLIENT_BIN" "$CLIENT_URL"
-    [ -f "nexus_server.txt" ] || wget -q --show-progress -O "nexus_server.txt" "$SERVER_CONFIG_URL"
-    [ -f "nexus_client.txt" ] || wget -q --show-progress -O "nexus_client.txt" "$CLIENT_CONFIG_URL"
-
-    chmod +x "$SERVER_BIN" "$CLIENT_BIN"
-    echo -e "${GREEN}依赖与二进制已准备就绪${NC}"
 }
 
-ask() {
-    local PROMPT=$1
-    local DEFAULT=$2
-    local VAR
-    read -p "$PROMPT [$DEFAULT]: " VAR
-    echo "${VAR:-$DEFAULT}"
+function download_bins_and_cfgs() {
+    cd "$BIN_DIR"
+    arch=$(detect_arch)
+    [[ ! -f "nexus_server_${arch}" ]] && wget -q -O "nexus_server_${arch}" "https://github.com/Tootoohk/nexushk/releases/download/1/nexus_server_${arch}"
+    [[ ! -f "nexus_client_${arch}" ]] && wget -q -O "nexus_client_${arch}" "https://github.com/Tootoohk/nexushk/releases/download/1/nexus_client_${arch}"
+    chmod +x "nexus_server_${arch}" "nexus_client_${arch}"
+    cd "$CFG_DIR"
+    [[ ! -f "nexus_server.txt" ]] && wget -q -O nexus_server.txt "https://github.com/Tootoohk/nexushk/releases/download/1/nexus_server.txt"
+    [[ ! -f "nexus_client.txt" ]] && wget -q -O nexus_client.txt "https://github.com/Tootoohk/nexushk/releases/download/1/nexus_client.txt"
+    echo -e "${GREEN}程序及配置文件下载/校验完毕${NC}"
 }
 
-deploy_server() {
+function deploy_servers() {
     cd "$NEXUS_DIR"
-    ARCH=$(uname -m)
-    case $ARCH in
-        x86_64|amd64)
-            SERVER_BIN="nexus_server_amd"
-            ;;
-        aarch64|arm64)
-            SERVER_BIN="nexus_server_arm"
-            ;;
-        *)
-            echo -e "${RED}不支持的架构: $ARCH${NC}"
-            exit 1
-            ;;
-    esac
-
-    if [ -z "$SERVER_BIN" ] || [ ! -f "$SERVER_BIN" ]; then
-        echo -e "${RED}未检测到服务端程序，请先运行“1. 依赖检查与环境准备”${NC}"
-        exit 1
+    arch=$(detect_arch)
+    if [[ ! -f "$BIN_DIR/nexus_server_${arch}" ]]; then
+        echo "未检测到服务端程序，自动下载..."
+        download_bins_and_cfgs
     fi
-    if [ ! -f "nexus_server.txt" ]; then
-        echo -e "${RED}未检测到服务端配置模板，请先运行“1. 依赖检查与环境准备”${NC}"
-        exit 1
-    fi
-
-    echo -e "${GREEN}请输入服务端配置参数 ...${NC}"
-    read -p "请输入钱包地址（多个用空格隔开）: " WALLET_ADDRESSES
-    ADDR_ARR=($WALLET_ADDRESSES)
-    PORT=$(ask "输入服务端初始端口" "18182")
-    WORKER=$(ask "输入每个服务端worker数量" "5")
-    QUEUE=$(ask "输入queue (建议: worker数×4)" "$((WORKER * 4))")
-
-    for i in "${!ADDR_ARR[@]}"; do
-        IDX=$((i+1))
-        ADDR="${ADDR_ARR[$i]}"
-        CUR_PORT=$((PORT + i))
-        DIR="$NEXUS_DIR/nexus_server_$IDX"
-        mkdir -p "$DIR"
-        cp "$SERVER_BIN" "$DIR/"
-        cp "nexus_server.txt" "$DIR/"
-        cat > "$DIR/nexus_server.txt" <<EOF
-address: $ADDR
-port: $CUR_PORT
-queue: $QUEUE
-worker: $WORKER
+    read -p "请输入需要部署服务端实例的数量: " count
+    for ((i=1;i<=count;i++)); do
+        server_dir="$NEXUS_DIR/server_$i"
+        mkdir -p "$server_dir"
+        cp "$BIN_DIR/nexus_server_${arch}" "$server_dir/"
+        cp "$CFG_DIR/nexus_server.txt" "$server_dir/nexus_server.txt"
+        read -p "服务端 $i 钱包地址: " wallet
+        read -p "服务端 $i 端口[默认18182]: " port
+        port=${port:-18182}
+        read -p "服务端 $i worker数量: " worker
+        queue=$((worker*4))
+        cat > "$server_dir/nexus_server.txt" <<EOF
+address: $wallet
+port: $port
+queue: $queue
+worker: $worker
 EOF
-        pm2 delete "服务端$IDX" &>/dev/null || true
-        pm2 start "$DIR/$SERVER_BIN" --name "服务端$IDX"
-        echo -e "${GREEN}服务端$IDX 启动成功，钱包：$ADDR，端口：$CUR_PORT${NC}"
+        pm2 delete server_$i >/dev/null 2>&1 || true
+        pm2 start "$server_dir/nexus_server_${arch}" --name server_$i --cwd "$server_dir"
     done
-    pm2 save
+    echo -e "${GREEN}所有服务端已部署并启动！${NC}"
 }
 
-get_next_client_config_id() {
+function deploy_clients() {
     cd "$NEXUS_DIR"
-    max_cfg=0
-    for d in nexus_client_*_*; do
-        [[ -d "$d" ]] || continue
-        cfg=$(echo $d | awk -F_ '{print $3}')
-        [[ $cfg =~ ^[0-9]+$ ]] && (( cfg > max_cfg )) && max_cfg=$cfg
-    done
-    echo $((max_cfg+1))
-}
-
-deploy_client_multi() {
-    cd "$NEXUS_DIR"
-    ARCH=$(uname -m)
-    case $ARCH in
-        x86_64|amd64)
-            CLIENT_BIN="nexus_client_amd"
-            ;;
-        aarch64|arm64)
-            CLIENT_BIN="nexus_client_arm"
-            ;;
-        *)
-            echo -e "${RED}不支持的架构: $ARCH${NC}"
-            exit 1
-            ;;
-    esac
-
-    if [ -z "$CLIENT_BIN" ] || [ ! -f "$CLIENT_BIN" ]; then
-        echo -e "${RED}未检测到客户端程序，请先运行“1. 依赖检查与环境准备”${NC}"
-        exit 1
+    arch=$(detect_arch)
+    if [[ ! -f "$BIN_DIR/nexus_client_${arch}" ]]; then
+        echo "未检测到客户端程序，自动下载..."
+        download_bins_and_cfgs
     fi
-    if [ ! -f "nexus_client.txt" ]; then
-        echo -e "${RED}未检测到客户端配置模板，请先运行“1. 依赖检查与环境准备”${NC}"
-        exit 1
-    fi
-
-    if [ "$1" == "append" ]; then
-        next_id=$(get_next_client_config_id)
-        echo -e "${GREEN}自动分配新增套数起始编号为 $next_id${NC}"
-        read -p "你要新增几套客户端配置文件？(建议输入1或更多): " CONFIG_COUNT
-        [[ -z "$CONFIG_COUNT" || ! "$CONFIG_COUNT" =~ ^[0-9]+$ ]] && CONFIG_COUNT=1
-        start_cfg=$next_id
-    else
-        read -p "你有几套客户端配置文件需要部署？(1 或更多): " CONFIG_COUNT
-        [[ -z "$CONFIG_COUNT" || ! "$CONFIG_COUNT" =~ ^[0-9]+$ ]] && CONFIG_COUNT=1
-        for d in nexus_client_*_*; do [ -d "$d" ] && rm -rf "$d"; done
-        pm2 delete $(pm2 list | grep 客户端 | awk '{print $2}') &>/dev/null || true
-        start_cfg=1
-    fi
-
-    declare -A CLIENT_INFO
-    for ((cfg=0;cfg<CONFIG_COUNT;cfg++)); do
-        id=$((start_cfg+cfg))
-        echo -e "\n${GREEN}配置第 $id 套客户端参数...${NC}"
-        HOST=$(ask "输入服务端IP (host) for config $id" "127.0.0.1")
-        PORT=$(ask "输入服务端端口 (port) for config $id" "18182")
-        COUNT=$(ask "此配置下客户端数量" "1")
-        CLIENT_INFO["$id,host"]=$HOST
-        CLIENT_INFO["$id,port"]=$PORT
-        CLIENT_INFO["$id,count"]=$COUNT
-    done
-
-    for ((cfg=0;cfg<CONFIG_COUNT;cfg++)); do
-        id=$((start_cfg+cfg))
-        HOST=${CLIENT_INFO["$id,host"]}
-        PORT=${CLIENT_INFO["$id,port"]}
-        COUNT=${CLIENT_INFO["$id,count"]}
-        for ((i=1;i<=COUNT;i++)); do
-            DIR="$NEXUS_DIR/nexus_client_${id}_$i"
-            mkdir -p "$DIR"
-            cp "$CLIENT_BIN" "$DIR/"
-            cp "nexus_client.txt" "$DIR/"
-            cat > "$DIR/nexus_client.txt" <<EOF
-host: $HOST
-port: $PORT
+    read -p "你有几套客户端配置文件需要部署？(1 或更多): " ccount
+    for ((g=1;g<=ccount;g++)); do
+        echo "配置第 $g 套客户端参数..."
+        read -p "输入服务端IP (host) for config $g [127.0.0.1]: " host
+        host=${host:-127.0.0.1}
+        read -p "输入服务端端口 (port) for config $g [18182]: " port
+        port=${port:-18182}
+        read -p "此配置下客户端数量 [1]: " cnum
+        cnum=${cnum:-1}
+        for ((i=1;i<=cnum;i++)); do
+            client_dir="$NEXUS_DIR/client_${g}_$i"
+            mkdir -p "$client_dir"
+            cp "$BIN_DIR/nexus_client_${arch}" "$client_dir/"
+            cp "$CFG_DIR/nexus_client.txt" "$client_dir/nexus_client.txt"
+            cat > "$client_dir/nexus_client.txt" <<EOF
+host: $host
+port: $port
 EOF
-            pm2 delete "客户端${id}_$i" &>/dev/null || true
-            pm2 start "$DIR/$CLIENT_BIN" --name "客户端${id}_$i"
-            echo -e "${GREEN}客户端${id}_$i 启动成功，连接 $HOST:$PORT${NC}"
+            pm2 delete client_${g}_$i >/dev/null 2>&1 || true
+            pm2 start "$client_dir/nexus_client_${arch}" --name client_${g}_$i --cwd "$client_dir"
         done
     done
-    pm2 save
+    echo -e "${GREEN}所有客户端已部署并启动！${NC}"
 }
 
-view_logs() {
+function add_clients() {
+    deploy_clients
+}
+
+function view_logs() {
     while true; do
         echo -e "\n${GREEN}1. 查看服务端日志（聚合所有服务端实例日志）"
         echo "2. 查看客户端日志（聚合选定套数所有实例日志）"
@@ -213,8 +116,7 @@ view_logs() {
         case $opt in
             1)
                 cd "$NEXUS_DIR"
-                # 自动聚合所有服务端 error 日志
-                logfiles=$(ls $HOME/.pm2/logs/---1-*-error.log 2>/dev/null)
+                logfiles=$(ls $HOME/.pm2/logs/server-*-error.log 2>/dev/null || true)
                 if [ -z "$logfiles" ]; then
                     echo "没有服务端日志文件（还未产生日志）"
                     continue
@@ -232,9 +134,9 @@ view_logs() {
             2)
                 cd "$NEXUS_DIR"
                 configs=()
-                for d in nexus_client_*_*; do
+                for d in client_*_*; do
                     [[ -d "$d" ]] || continue
-                    cfg=$(echo $d | awk -F_ '{print $3}')
+                    cfg=$(echo $d | awk -F_ '{print $2}')
                     [[ " ${configs[*]} " =~ " $cfg " ]] || configs+=($cfg)
                 done
                 if [ ${#configs[@]} -eq 0 ]; then
@@ -248,8 +150,7 @@ view_logs() {
                 read -p "请选择要查看的套数(输入编号, 0返回): " num
                 [[ "$num" == "0" ]] && continue
                 cfgid=${configs[$((num-1))]}
-                # 聚合该套所有实例的 error 日志
-                logfiles=$(ls $HOME/.pm2/logs/---${cfgid}-*-error.log 2>/dev/null)
+                logfiles=$(ls $HOME/.pm2/logs/client-${cfgid}-*-error.log 2>/dev/null || true)
                 if [ -z "$logfiles" ]; then
                     echo "没有该套客户端的日志文件（还未产生日志）"
                     continue
@@ -270,222 +171,151 @@ view_logs() {
     done
 }
 
-edit_config() {
-    echo -e "\n${GREEN}1. 修改服务端配置\n2. 修改客户端配置\n3. 返回主菜单${NC}"
-    read -p "请选择: " opt
-    case $opt in
-        1)
-            cd "$NEXUS_DIR"
-            ARCH=$(uname -m)
-            case $ARCH in
-                x86_64|amd64)
-                    SERVER_BIN="nexus_server_amd"
-                    ;;
-                aarch64|arm64)
-                    SERVER_BIN="nexus_server_arm"
-                    ;;
-                *)
-                    echo -e "${RED}不支持的架构: $ARCH${NC}"
-                    exit 1
-                    ;;
-            esac
-            if [ -z "$SERVER_BIN" ] || [ ! -f "$SERVER_BIN" ]; then
-                echo -e "${RED}未检测到服务端程序，请先运行“1. 依赖检查与环境准备”${NC}"
-                exit 1
-            fi
-            ls -d nexus_server_* 2>/dev/null || { echo "未发现服务端"; return; }
-            echo "已有服务端文件夹："
-            for d in nexus_server_*; do
-                idx=$(echo $d | awk -F_ '{print $3}')
-                WALLET=$(grep address $d/nexus_server.txt | awk '{print $2}')
-                echo "$idx - 钱包: $WALLET"
-            done
-            read -p "输入要修改的服务端序号（如1），全部修改请输入 all: " target
-            if [[ $target == "all" ]]; then
-                PORT=$(ask "输入服务端初始端口" "18182")
-                WORKER=$(ask "输入worker" "5")
-                QUEUE=$(ask "输入queue" "$((WORKER*4))")
-                idx=1
-                for d in nexus_server_*; do
-                    WALLET=$(grep address $d/nexus_server.txt | awk '{print $2}')
-                    CUR_PORT=$((PORT+idx-1))
-                    cat > "$d/nexus_server.txt" <<EOF
-address: $WALLET
-port: $CUR_PORT
-queue: $QUEUE
-worker: $WORKER
-EOF
-                    pm2 restart "服务端$idx"
-                    idx=$((idx+1))
-                done
-            else
-                d="nexus_server_$target"
-                if [ ! -d "$d" ]; then echo "文件夹不存在"; return; fi
-                ADDR=$(ask "输入新钱包地址" "$(grep address $d/nexus_server.txt | awk '{print $2}')")
-                PORT=$(ask "输入端口" "$(grep port $d/nexus_server.txt | awk '{print $2}')")
-                WORKER=$(ask "输入worker" "$(grep worker $d/nexus_server.txt | awk '{print $2}')")
-                QUEUE=$(ask "输入queue" "$(grep queue $d/nexus_server.txt | awk '{print $2}')")
-                cat > "$d/nexus_server.txt" <<EOF
-address: $ADDR
-port: $PORT
-queue: $QUEUE
-worker: $WORKER
-EOF
-                pm2 restart "服务端$target"
-            fi
-            pm2 save
-            ;;
-        2)
-            cd "$NEXUS_DIR"
-            ARCH=$(uname -m)
-            case $ARCH in
-                x86_64|amd64)
-                    CLIENT_BIN="nexus_client_amd"
-                    ;;
-                aarch64|arm64)
-                    CLIENT_BIN="nexus_client_arm"
-                    ;;
-                *)
-                    echo -e "${RED}不支持的架构: $ARCH${NC}"
-                    exit 1
-                    ;;
-            esac
-            if [ -z "$CLIENT_BIN" ] || [ ! -f "$CLIENT_BIN" ]; then
-                echo -e "${RED}未检测到客户端程序，请先运行“1. 依赖检查与环境准备”${NC}"
-                exit 1
-            fi
-            configs=()
-            for d in nexus_client_*_*; do
-                [[ -d "$d" ]] || continue
-                cfg=$(echo $d | awk -F_ '{print $3}')
-                [[ " ${configs[*]} " =~ " $cfg " ]] || configs+=($cfg)
-            done
-            if [ ${#configs[@]} -eq 0 ]; then
-                echo "未发现任何客户端配置实例"
-                return
-            fi
-            echo "当前有${#configs[@]}套客户端配置"
-            for idx in "${!configs[@]}"; do
-                echo "$((idx+1)). 修改第${configs[$idx]}套客户端配置"
-            done
-            echo "$(( ${#configs[@]}+1 )). 重新设定全部客户端多开（删除重建）"
-            echo "0. 返回主菜单"
-            read -p "请选择(编号): " num
-            if [[ "$num" == "0" ]]; then return; fi
-            if [[ "$num" -eq $(( ${#configs[@]}+1 )) ]]; then
-                pm2 delete $(pm2 list | grep 客户端 | awk '{print $2}') &>/dev/null || true
-                rm -rf nexus_client_*_*
-                deploy_client_multi full
-                return
-            fi
-            cfgid=${configs[$((num-1))]}
-            count=$(ls -d nexus_client_${cfgid}_* 2>/dev/null | wc -l)
-            HOST=$(ask "输入host" "$(grep host nexus_client_${cfgid}_1/nexus_client.txt | awk '{print $2}')")
-            PORT=$(ask "输入port" "$(grep port nexus_client_${cfgid}_1/nexus_client.txt | awk '{print $2}')")
-            for ((i=1;i<=count;i++)); do
-                d="nexus_client_${cfgid}_$i"
-                cat > "$d/nexus_client.txt" <<EOF
-host: $HOST
-port: $PORT
-EOF
-                pm2 restart "客户端${cfgid}_$i"
-            done
-            pm2 save
-            ;;
-        3) ;;
-        *) echo "无效输入" ;;
-    esac
-}
-
-delete_all() {
-    echo -e "${RED}1. 删除并停止所有服务端\n2. 删除并停止所有客户端\n3. 删除指定客户端配置套数\n4. 返回主菜单${NC}"
-    read -p "请选择: " opt
-    case $opt in
-        1)
-            pm2 delete $(pm2 list | grep 服务端 | awk '{print $2}') &>/dev/null || true
-            rm -rf "$NEXUS_DIR"/nexus_server_*
-            echo -e "${RED}服务端相关全部已删除${NC}"
-            ;;
-        2)
-            pm2 delete $(pm2 list | grep 客户端 | awk '{print $2}') &>/dev/null || true
-            rm -rf "$NEXUS_DIR"/nexus_client_*_*
-            echo -e "${RED}客户端相关全部已删除${NC}"
-            ;;
-        3)
-            cd "$NEXUS_DIR"
-            configs=()
-            for d in nexus_client_*_*; do
-                [[ -d "$d" ]] || continue
-                cfg=$(echo $d | awk -F_ '{print $3}')
-                [[ " ${configs[*]} " =~ " $cfg " ]] || configs+=($cfg)
-            done
-            if [ ${#configs[@]} -eq 0 ]; then
-                echo "未发现任何客户端配置实例"
-                return
-            fi
-            echo "当前有${#configs[@]}套客户端配置"
-            for idx in "${!configs[@]}"; do
-                echo "$((idx+1)). 删除第${configs[$idx]}套客户端"
-            done
-            echo "0. 返回主菜单"
-            read -p "请选择(编号): " num
-            if [[ "$num" == "0" ]]; then return; fi
-            cfgid=${configs[$((num-1))]}
-            pm2 delete $(pm2 list | grep 客户端${cfgid}_ | awk '{print $2}') &>/dev/null || true
-            rm -rf nexus_client_${cfgid}_*
-            echo -e "${RED}第${cfgid}套客户端相关全部已删除${NC}"
-            ;;
-        4) ;;
-        *) echo "无效输入" ;;
-    esac
-}
-
-update_bin_url() {
-    echo -e "${GREEN}检测系统架构 ...${NC}"
-    ARCH=$(uname -m)
-    echo -e "${GREEN}当前系统架构: $ARCH${NC}"
-    read -p "请输入新的服务端二进制下载地址: " new_server_url
-    read -p "请输入新的客户端二进制下载地址: " new_client_url
-    cd "$NEXUS_DIR"
-    if [[ $ARCH == "x86_64" || $ARCH == "amd64" ]]; then
-        wget -q --show-progress -O nexus_server_amd "$new_server_url"
-        wget -q --show-progress -O nexus_client_amd "$new_client_url"
-        chmod +x nexus_server_amd nexus_client_amd
-    elif [[ $ARCH == "aarch64" || $ARCH == "arm64" ]]; then
-        wget -q --show-progress -O nexus_server_arm "$new_server_url"
-        wget -q --show-progress -O nexus_client_arm "$new_client_url"
-        chmod +x nexus_server_arm nexus_client_arm
-    fi
-    echo -e "${GREEN}二进制已更新${NC}"
-}
-
-main_menu() {
+function modify_config() {
     while true; do
-        echo -e "\n${GREEN}======== Nexus 一键管理脚本 ========
-1. 依赖检查与环境准备
-2. 部署/运行服务端
-3. 部署/运行客户端（会覆盖重建所有客户端）
-4. 查看pm2日志
-5. 修改服务端/客户端配置并重启
-6. 一键删除/单独删除
-7. 更新程序下载地址
-8. 新增客户端配置套数（不中断已有多开）
-0. 退出
-===================================${NC}"
-        read -p "请选择功能: " choice
-        case $choice in
-            1) check_and_install_deps ;;
-            2) deploy_server ;;
-            3) deploy_client_multi full ;;
-            4) view_logs ;;
-            5) edit_config ;;
-            6) delete_all ;;
-            7) update_bin_url ;;
-            8) deploy_client_multi append ;;
-            0) echo "Bye~" && exit 0 ;;
+        echo -e "${GREEN}1. 修改服务端配置并重启\n2. 修改客户端配置并重启\n3. 返回${NC}"
+        read -p "请选择: " opt
+        case $opt in
+            1)
+                cd "$NEXUS_DIR"
+                servers=($(ls -d server_* 2>/dev/null))
+                if [ ${#servers[@]} -eq 0 ]; then
+                    echo "没有已部署的服务端！"
+                    continue
+                fi
+                echo "已部署服务端实例："
+                for idx in "${!servers[@]}"; do
+                    echo "$((idx+1)). ${servers[$idx]}"
+                done
+                read -p "请选择要修改的服务端编号(输入编号, 0返回): " num
+                [[ "$num" == "0" ]] && continue
+                srv=${servers[$((num-1))]}
+                cfg="$NEXUS_DIR/$srv/nexus_server.txt"
+                echo "当前配置如下："
+                cat "$cfg"
+                read -p "新钱包地址: " wallet
+                read -p "新端口[默认18182]: " port
+                port=${port:-18182}
+                read -p "新worker数量: " worker
+                queue=$((worker*4))
+                cat > "$cfg" <<EOF
+address: $wallet
+port: $port
+queue: $queue
+worker: $worker
+EOF
+                pm2 restart $srv
+                echo -e "${GREEN}服务端 $srv 配置已更新并重启${NC}"
+                ;;
+            2)
+                cd "$NEXUS_DIR"
+                configs=()
+                for d in client_*_*; do
+                    [[ -d "$d" ]] || continue
+                    cfgid=$(echo $d | awk -F_ '{print $2}')
+                    [[ " ${configs[*]} " =~ " $cfgid " ]] || configs+=($cfgid)
+                done
+                if [ ${#configs[@]} -eq 0 ]; then
+                    echo "没有已部署的客户端！"
+                    continue
+                fi
+                echo "已部署客户端配置套数："
+                for idx in "${!configs[@]}"; do
+                    echo "$((idx+1)). 第${configs[$idx]}套"
+                done
+                read -p "请选择要修改的客户端套数(输入编号, 0返回): " num
+                [[ "$num" == "0" ]] && continue
+                cfgid=${configs[$((num-1))]}
+                # 结束并清理原本的所有该套实例
+                for d in client_${cfgid}_*; do
+                    pm2 delete $d >/dev/null 2>&1 || true
+                    rm -rf "$NEXUS_DIR/$d"
+                done
+                # 重新部署
+                echo "配置第 $cfgid 套新客户端参数..."
+                read -p "新服务端IP (host) [127.0.0.1]: " host
+                host=${host:-127.0.0.1}
+                read -p "新服务端端口 (port) [18182]: " port
+                port=${port:-18182}
+                read -p "新客户端数量: " cnum
+                arch=$(detect_arch)
+                for ((i=1;i<=cnum;i++)); do
+                    client_dir="$NEXUS_DIR/client_${cfgid}_$i"
+                    mkdir -p "$client_dir"
+                    cp "$BIN_DIR/nexus_client_${arch}" "$client_dir/"
+                    cp "$CFG_DIR/nexus_client.txt" "$client_dir/nexus_client.txt"
+                    cat > "$client_dir/nexus_client.txt" <<EOF
+host: $host
+port: $port
+EOF
+                    pm2 delete client_${cfgid}_$i >/dev/null 2>&1 || true
+                    pm2 start "$client_dir/nexus_client_${arch}" --name client_${cfgid}_$i --cwd "$client_dir"
+                done
+                echo -e "${GREEN}第${cfgid}套客户端已全部重建并启动！${NC}"
+                ;;
+            3) break ;;
             *) echo "无效输入" ;;
         esac
     done
 }
 
-main_menu
+function delete_instances() {
+    echo -e "${GREEN}1. 删除全部服务端实例\n2. 删除全部客户端实例\n3. 单独删除指定服务端/客户端\n4. 返回${NC}"
+    read -p "请选择: " opt
+    case $opt in
+        1)
+            pm2 delete $(pm2 ls | awk '/server_/ {print $4}') || true
+            rm -rf $NEXUS_DIR/server_*
+            echo -e "${GREEN}所有服务端已删除！${NC}"
+            ;;
+        2)
+            pm2 delete $(pm2 ls | awk '/client_/ {print $4}') || true
+            rm -rf $NEXUS_DIR/client_*
+            echo -e "${GREEN}所有客户端已删除！${NC}"
+            ;;
+        3)
+            pm2 ls
+            read -p "请输入要删除的 pm2 实例名: " name
+            pm2 delete $name || true
+            rm -rf $NEXUS_DIR/$name
+            echo -e "${GREEN}$name 已删除！${NC}"
+            ;;
+        4) return ;;
+        *) echo "无效输入" ;;
+    esac
+}
+
+function update_bin_urls() {
+    echo "该功能暂略，如需支持自定义下载地址可扩展！"
+}
+
+function menu() {
+    while true; do
+        echo -e "\n======== Nexus 一键管理脚本 ========"
+        echo "1. 依赖检查与环境准备"
+        echo "2. 部署/运行服务端"
+        echo "3. 部署/运行客户端（会覆盖重建所有客户端）"
+        echo "4. 查看pm2日志"
+        echo "5. 修改服务端/客户端配置并重启"
+        echo "6. 一键删除/单独删除"
+        echo "7. 更新程序下载地址"
+        echo "8. 新增客户端配置套数（不中断已有多开）"
+        echo "0. 退出"
+        echo "==================================="
+        read -p "请选择功能: " choice
+        case $choice in
+            1) check_dependencies; download_bins_and_cfgs ;;
+            2) deploy_servers ;;
+            3) deploy_clients ;;
+            4) view_logs ;;
+            5) modify_config ;;
+            6) delete_instances ;;
+            7) update_bin_urls ;;
+            8) add_clients ;;
+            0) exit 0 ;;
+            *) echo "无效输入" ;;
+        esac
+    done
+}
+
+menu
