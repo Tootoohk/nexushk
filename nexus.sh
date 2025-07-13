@@ -210,7 +210,8 @@ view_logs() {
         read -p "请选择: " opt
         case $opt in
             1)
-                pm2 list | grep 服务端 && pm2 logs 服务端 --lines 100
+                echo -e "${GREEN}已进入服务端实时日志跟随模式，按 Ctrl+C 可返回主菜单${NC}"
+                pm2 logs 服务端 --lines 100
                 ;;
             2)
                 cd "$NEXUS_DIR"
@@ -231,14 +232,15 @@ view_logs() {
                 read -p "请选择要查看的套数(输入编号, 0返回): " num
                 [[ "$num" == "0" ]] && continue
                 cfgid=${configs[$((num-1))]}
-                pm2 list | grep 客户端${cfgid}_ && pm2 logs 客户端${cfgid}_ --lines 100
+                echo -e "${GREEN}已进入客户端${cfgid}套实时日志跟随模式，按 Ctrl+C 返回菜单${NC}"
+                pm2 logs 客户端${cfgid}_ --lines 100
                 ;;
             3) break ;;
             *) echo "无效输入" ;;
         esac
-        echo -e "${GREEN}\n按 CTRL+C 返回主菜单 ...${NC}"
     done
 }
+
 
 edit_config() {
     echo -e "\n${GREEN}1. 修改服务端配置\n2. 修改客户端配置\n3. 返回主菜单${NC}"
