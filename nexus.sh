@@ -211,13 +211,7 @@ view_logs() {
         case $opt in
             1)
                 cd "$NEXUS_DIR"
-                # 用 pm2 id 定位日志文件
-                server_ids=($(pm2 jlist | jq -r '.[] | select(.name|test("^服务端")) | .pm_id'))
-                logfiles=""
-                for id in "${server_ids[@]}"; do
-                    logfile="$HOME/.pm2/logs/${id}-out.log"
-                    [ -f "$logfile" ] && logfiles="$logfiles $logfile"
-                done
+                logfiles=$(ls $HOME/.pm2/logs/---1-*-error.log 2>/dev/null)
                 if [ -z "$logfiles" ]; then
                     echo "没有服务端日志文件（还未产生日志）"
                     continue
@@ -226,9 +220,8 @@ view_logs() {
                 tail -F $logfiles | awk '
                     BEGIN{ORS="";}
                     {
-                        split(FILENAME, arr, "/"); 
+                        split(FILENAME, arr, "/");
                         file=arr[length(arr)];
-                        gsub("-out.log", "", file);
                         print "\033[1;32m["file"]\033[0m ", $0, "\n";
                     }
                 '
@@ -252,13 +245,8 @@ view_logs() {
                 read -p "请选择要查看的套数(输入编号, 0返回): " num
                 [[ "$num" == "0" ]] && continue
                 cfgid=${configs[$((num-1))]}
-                # 用 pm2 id 查找该套所有客户端日志文件
-                client_ids=($(pm2 jlist | jq -r --arg n "客户端${cfgid}_" '.[] | select(.name|startswith($n)) | .pm_id'))
-                logfiles=""
-                for id in "${client_ids[@]}"; do
-                    logfile="$HOME/.pm2/logs/${id}-out.log"
-                    [ -f "$logfile" ] && logfiles="$logfiles $logfile"
-                done
+                # 匹配所有对应的 error.log
+                logfiles=$(ls $HOME/.pm2/logs/---1-${cfgid}-error.log 2>/dev/null)
                 if [ -z "$logfiles" ]; then
                     echo "没有该套客户端的日志文件（还未产生日志）"
                     continue
@@ -267,9 +255,8 @@ view_logs() {
                 tail -F $logfiles | awk '
                     BEGIN{ORS="";}
                     {
-                        split(FILENAME, arr, "/"); 
+                        split(FILENAME, arr, "/");
                         file=arr[length(arr)];
-                        gsub("-out.log", "", file);
                         print "\033[1;31m["file"]\033[0m ", $0, "\n";
                     }
                 '
