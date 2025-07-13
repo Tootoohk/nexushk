@@ -14,7 +14,6 @@ CLIENT_ARM_URL="https://github.com/Tootoohk/nexushk/releases/download/1/nexus_cl
 SERVER_AMD_URL="https://github.com/Tootoohk/nexushk/releases/download/1/nexus_server_amd"
 CLIENT_AMD_URL="https://github.com/Tootoohk/nexushk/releases/download/1/nexus_client_amd"
 
-# 检查依赖
 check_and_install_deps() {
     echo -e "${GREEN}更新系统软件包...${NC}"
     sudo apt update && sudo apt install -y curl wget jq unzip nodejs
@@ -31,7 +30,6 @@ check_and_install_deps() {
     fi
 
     cd "$NEXUS_DIR"
-    echo -e "${GREEN}检测系统架构 ...${NC}"
     ARCH=$(uname -m)
     case $ARCH in
         x86_64|amd64)
@@ -52,16 +50,14 @@ check_and_install_deps() {
             ;;
     esac
 
-    echo -e "${GREEN}下载服务端和客户端二进制 ...${NC}"
-    wget -q --show-progress -O "$SERVER_BIN" "$SERVER_URL"
-    wget -q --show-progress -O "$CLIENT_BIN" "$CLIENT_URL"
-    wget -q --show-progress -O "nexus_server.txt" "$SERVER_CONFIG_URL"
-    wget -q --show-progress -O "nexus_client.txt" "$CLIENT_CONFIG_URL"
+    [ -f "$SERVER_BIN" ] || wget -q --show-progress -O "$SERVER_BIN" "$SERVER_URL"
+    [ -f "$CLIENT_BIN" ] || wget -q --show-progress -O "$CLIENT_BIN" "$CLIENT_URL"
+    [ -f "nexus_server.txt" ] || wget -q --show-progress -O "nexus_server.txt" "$SERVER_CONFIG_URL"
+    [ -f "nexus_client.txt" ] || wget -q --show-progress -O "nexus_client.txt" "$CLIENT_CONFIG_URL"
 
     chmod +x "$SERVER_BIN" "$CLIENT_BIN"
-    echo -e "${GREEN}已设置执行权限${NC}"
+    echo -e "${GREEN}依赖与二进制已准备就绪${NC}"
 }
-
 
 ask() {
     local PROMPT=$1
@@ -73,6 +69,29 @@ ask() {
 
 deploy_server() {
     cd "$NEXUS_DIR"
+    ARCH=$(uname -m)
+    case $ARCH in
+        x86_64|amd64)
+            SERVER_BIN="nexus_server_amd"
+            ;;
+        aarch64|arm64)
+            SERVER_BIN="nexus_server_arm"
+            ;;
+        *)
+            echo -e "${RED}不支持的架构: $ARCH${NC}"
+            exit 1
+            ;;
+    esac
+
+    if [ -z "$SERVER_BIN" ] || [ ! -f "$SERVER_BIN" ]; then
+        echo -e "${RED}未检测到服务端程序，请先运行“1. 依赖检查与环境准备”${NC}"
+        exit 1
+    fi
+    if [ ! -f "nexus_server.txt" ]; then
+        echo -e "${RED}未检测到服务端配置模板，请先运行“1. 依赖检查与环境准备”${NC}"
+        exit 1
+    fi
+
     echo -e "${GREEN}请输入服务端配置参数 ...${NC}"
     read -p "请输入钱包地址（多个用空格隔开）: " WALLET_ADDRESSES
     ADDR_ARR=($WALLET_ADDRESSES)
@@ -101,7 +120,6 @@ EOF
     pm2 save
 }
 
-# 获取当前客户端配置套数的最大编号
 get_next_client_config_id() {
     cd "$NEXUS_DIR"
     max_cfg=0
@@ -113,9 +131,31 @@ get_next_client_config_id() {
     echo $((max_cfg+1))
 }
 
-# 可用于完整部署或批量追加新配置
 deploy_client_multi() {
     cd "$NEXUS_DIR"
+    ARCH=$(uname -m)
+    case $ARCH in
+        x86_64|amd64)
+            CLIENT_BIN="nexus_client_amd"
+            ;;
+        aarch64|arm64)
+            CLIENT_BIN="nexus_client_arm"
+            ;;
+        *)
+            echo -e "${RED}不支持的架构: $ARCH${NC}"
+            exit 1
+            ;;
+    esac
+
+    if [ -z "$CLIENT_BIN" ] || [ ! -f "$CLIENT_BIN" ]; then
+        echo -e "${RED}未检测到客户端程序，请先运行“1. 依赖检查与环境准备”${NC}"
+        exit 1
+    fi
+    if [ ! -f "nexus_client.txt" ]; then
+        echo -e "${RED}未检测到客户端配置模板，请先运行“1. 依赖检查与环境准备”${NC}"
+        exit 1
+    fi
+
     if [ "$1" == "append" ]; then
         next_id=$(get_next_client_config_id)
         echo -e "${GREEN}自动分配新增套数起始编号为 $next_id${NC}"
@@ -125,7 +165,6 @@ deploy_client_multi() {
     else
         read -p "你有几套客户端配置文件需要部署？(1 或更多): " CONFIG_COUNT
         [[ -z "$CONFIG_COUNT" || ! "$CONFIG_COUNT" =~ ^[0-9]+$ ]] && CONFIG_COUNT=1
-        # 删除历史多开（完整部署覆盖）
         for d in nexus_client_*_*; do [ -d "$d" ] && rm -rf "$d"; done
         pm2 delete $(pm2 list | grep 客户端 | awk '{print $2}') &>/dev/null || true
         start_cfg=1
@@ -207,6 +246,23 @@ edit_config() {
     case $opt in
         1)
             cd "$NEXUS_DIR"
+            ARCH=$(uname -m)
+            case $ARCH in
+                x86_64|amd64)
+                    SERVER_BIN="nexus_server_amd"
+                    ;;
+                aarch64|arm64)
+                    SERVER_BIN="nexus_server_arm"
+                    ;;
+                *)
+                    echo -e "${RED}不支持的架构: $ARCH${NC}"
+                    exit 1
+                    ;;
+            esac
+            if [ -z "$SERVER_BIN" ] || [ ! -f "$SERVER_BIN" ]; then
+                echo -e "${RED}未检测到服务端程序，请先运行“1. 依赖检查与环境准备”${NC}"
+                exit 1
+            fi
             ls -d nexus_server_* 2>/dev/null || { echo "未发现服务端"; return; }
             echo "已有服务端文件夹："
             for d in nexus_server_*; do
@@ -251,6 +307,23 @@ EOF
             ;;
         2)
             cd "$NEXUS_DIR"
+            ARCH=$(uname -m)
+            case $ARCH in
+                x86_64|amd64)
+                    CLIENT_BIN="nexus_client_amd"
+                    ;;
+                aarch64|arm64)
+                    CLIENT_BIN="nexus_client_arm"
+                    ;;
+                *)
+                    echo -e "${RED}不支持的架构: $ARCH${NC}"
+                    exit 1
+                    ;;
+            esac
+            if [ -z "$CLIENT_BIN" ] || [ ! -f "$CLIENT_BIN" ]; then
+                echo -e "${RED}未检测到客户端程序，请先运行“1. 依赖检查与环境准备”${NC}"
+                exit 1
+            fi
             configs=()
             for d in nexus_client_*_*; do
                 [[ -d "$d" ]] || continue
