@@ -17,13 +17,12 @@ CLIENT_AMD_URL="https://github.com/Tootoohk/nexushk/releases/download/1/nexus_cl
 # 检查依赖
 check_and_install_deps() {
     echo -e "${GREEN}更新系统软件包...${NC}"
-    sudo apt update && sudo apt install -y curl wget jq unzip nodejs npm
+    sudo apt update && sudo apt install -y curl wget jq unzip nodejs
     if ! command -v pm2 &>/dev/null; then
         echo -e "${GREEN}正在全局安装 pm2 ...${NC}"
         sudo npm install -g pm2
     else
-        echo -e "${GREEN}pm2 已安装，尝试升级 ...${NC}"
-        sudo npm update -g pm2
+        echo -e "${GREEN}pm2 已安装，跳过升级${NC}"
     fi
 
     if [ ! -d "$NEXUS_DIR" ]; then
@@ -62,6 +61,7 @@ check_and_install_deps() {
     chmod +x "$SERVER_BIN" "$CLIENT_BIN"
     echo -e "${GREEN}已设置执行权限${NC}"
 }
+
 
 ask() {
     local PROMPT=$1
