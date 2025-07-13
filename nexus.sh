@@ -13,7 +13,7 @@ mkdir -p "$BIN_DIR" "$CFG_DIR"
 
 function check_dependencies() {
     echo -e "${GREEN}>>> 检查/安装依赖${NC}"
-    apt update && apt install -y curl wget jq unzip nodejs
+    apt update && apt install -y curl wget jq unzip nodejs npm
     if ! command -v pm2 >/dev/null 2>&1; then
         npm install -g pm2
     fi
