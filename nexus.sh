@@ -211,19 +211,12 @@ view_logs() {
         case $opt in
             1)
                 cd "$NEXUS_DIR"
-                # 获取所有服务端实例名
-                server_instances=($(pm2 list | grep 服务端 | awk '{print $4}'))
-                if [ ${#server_instances[@]} -eq 0 ]; then
-                    echo "没有发现任何服务端实例"
-                    continue
-                fi
-                # 拼接所有日志文件
+                # 用 pm2 id 定位日志文件
+                server_ids=($(pm2 jlist | jq -r '.[] | select(.name|test("^服务端")) | .pm_id'))
                 logfiles=""
-                for inst in "${server_instances[@]}"; do
-                    logfile="$HOME/.pm2/logs/${inst}-out.log"
-                    if [ -f "$logfile" ]; then
-                        logfiles="$logfiles $logfile"
-                    fi
+                for id in "${server_ids[@]}"; do
+                    logfile="$HOME/.pm2/logs/${id}-out.log"
+                    [ -f "$logfile" ] && logfiles="$logfiles $logfile"
                 done
                 if [ -z "$logfiles" ]; then
                     echo "没有服务端日志文件（还未产生日志）"
@@ -236,8 +229,7 @@ view_logs() {
                         split(FILENAME, arr, "/"); 
                         file=arr[length(arr)];
                         gsub("-out.log", "", file);
-                        color=32+((file~/[0-9]+$/)?file:0)%7;
-                        print "\033[1;"color"m["file"]\033[0m ", $0, "\n";
+                        print "\033[1;32m["file"]\033[0m ", $0, "\n";
                     }
                 '
                 ;;
@@ -260,17 +252,12 @@ view_logs() {
                 read -p "请选择要查看的套数(输入编号, 0返回): " num
                 [[ "$num" == "0" ]] && continue
                 cfgid=${configs[$((num-1))]}
-                instance_names=($(pm2 list | grep "客户端${cfgid}_" | awk '{print $4}'))
-                if [ ${#instance_names[@]} -eq 0 ]; then
-                    echo "没有发现该套客户端实例"
-                    continue
-                fi
+                # 用 pm2 id 查找该套所有客户端日志文件
+                client_ids=($(pm2 jlist | jq -r --arg n "客户端${cfgid}_" '.[] | select(.name|startswith($n)) | .pm_id'))
                 logfiles=""
-                for inst in "${instance_names[@]}"; do
-                    logfile="$HOME/.pm2/logs/${inst}-out.log"
-                    if [ -f "$logfile" ]; then
-                        logfiles="$logfiles $logfile"
-                    fi
+                for id in "${client_ids[@]}"; do
+                    logfile="$HOME/.pm2/logs/${id}-out.log"
+                    [ -f "$logfile" ] && logfiles="$logfiles $logfile"
                 done
                 if [ -z "$logfiles" ]; then
                     echo "没有该套客户端的日志文件（还未产生日志）"
@@ -283,8 +270,7 @@ view_logs() {
                         split(FILENAME, arr, "/"); 
                         file=arr[length(arr)];
                         gsub("-out.log", "", file);
-                        color=31+((file~/[0-9]+$/)?file:0)%7;
-                        print "\033[1;"color"m["file"]\033[0m ", $0, "\n";
+                        print "\033[1;31m["file"]\033[0m ", $0, "\n";
                     }
                 '
                 ;;
@@ -293,8 +279,6 @@ view_logs() {
         esac
     done
 }
-
-
 
 edit_config() {
     echo -e "\n${GREEN}1. 修改服务端配置\n2. 修改客户端配置\n3. 返回主菜单${NC}"
