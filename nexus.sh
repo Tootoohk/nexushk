@@ -206,12 +206,40 @@ EOF
 
 view_logs() {
     while true; do
-        echo -e "\n${GREEN}1. 查看服务端日志\n2. 查看客户端日志\n3. 返回主菜单${NC}"
+        echo -e "\n${GREEN}1. 查看服务端日志（聚合所有服务端实例日志）\n2. 查看客户端日志（聚合选定套数所有实例日志）\n3. 返回主菜单${NC}"
         read -p "请选择: " opt
         case $opt in
             1)
-                echo -e "${GREEN}已进入服务端实时日志跟随模式，按 Ctrl+C 可返回主菜单${NC}"
-                pm2 logs 服务端 --lines 100
+                cd "$NEXUS_DIR"
+                # 获取所有服务端实例名
+                server_instances=($(pm2 list | grep 服务端 | awk '{print $4}'))
+                if [ ${#server_instances[@]} -eq 0 ]; then
+                    echo "没有发现任何服务端实例"
+                    continue
+                fi
+                # 拼接所有日志文件
+                logfiles=""
+                for inst in "${server_instances[@]}"; do
+                    logfile="$HOME/.pm2/logs/${inst}-out.log"
+                    if [ -f "$logfile" ]; then
+                        logfiles="$logfiles $logfile"
+                    fi
+                done
+                if [ -z "$logfiles" ]; then
+                    echo "没有服务端日志文件（还未产生日志）"
+                    continue
+                fi
+                echo -e "${GREEN}已进入所有服务端实例日志聚合模式，按 Ctrl+C 返回菜单${NC}"
+                tail -F $logfiles | awk '
+                    BEGIN{ORS="";}
+                    {
+                        split(FILENAME, arr, "/"); 
+                        file=arr[length(arr)];
+                        gsub("-out.log", "", file);
+                        color=32+((file~/[0-9]+$/)?file:0)%7;
+                        print "\033[1;"color"m["file"]\033[0m ", $0, "\n";
+                    }
+                '
                 ;;
             2)
                 cd "$NEXUS_DIR"
@@ -232,14 +260,40 @@ view_logs() {
                 read -p "请选择要查看的套数(输入编号, 0返回): " num
                 [[ "$num" == "0" ]] && continue
                 cfgid=${configs[$((num-1))]}
-                echo -e "${GREEN}已进入客户端${cfgid}套实时日志跟随模式，按 Ctrl+C 返回菜单${NC}"
-                pm2 logs 客户端${cfgid}_ --lines 100
+                instance_names=($(pm2 list | grep "客户端${cfgid}_" | awk '{print $4}'))
+                if [ ${#instance_names[@]} -eq 0 ]; then
+                    echo "没有发现该套客户端实例"
+                    continue
+                fi
+                logfiles=""
+                for inst in "${instance_names[@]}"; do
+                    logfile="$HOME/.pm2/logs/${inst}-out.log"
+                    if [ -f "$logfile" ]; then
+                        logfiles="$logfiles $logfile"
+                    fi
+                done
+                if [ -z "$logfiles" ]; then
+                    echo "没有该套客户端的日志文件（还未产生日志）"
+                    continue
+                fi
+                echo -e "${GREEN}已进入第${cfgid}套客户端所有实例日志聚合模式，按 Ctrl+C 返回菜单${NC}"
+                tail -F $logfiles | awk '
+                    BEGIN{ORS="";}
+                    {
+                        split(FILENAME, arr, "/"); 
+                        file=arr[length(arr)];
+                        gsub("-out.log", "", file);
+                        color=31+((file~/[0-9]+$/)?file:0)%7;
+                        print "\033[1;"color"m["file"]\033[0m ", $0, "\n";
+                    }
+                '
                 ;;
             3) break ;;
             *) echo "无效输入" ;;
         esac
     done
 }
+
 
 
 edit_config() {
